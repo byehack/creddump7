@@ -13,6 +13,8 @@
 # You should have received a copy of the GNU General Public License
 # along with creddump.  If not, see <http://www.gnu.org/licenses/>.
 
+# pylint: disable=invalid-name
+
 """
 @author:       Brendan Dolan-Gavitt
 @license:      GNU General Public License 2.0 or later

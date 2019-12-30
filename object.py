@@ -9,12 +9,14 @@
 # This program is distributed in the hope that it will be useful, but
 # WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-# General Public License for more details. 
+# General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA 
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #
+
+# pylint: disable=invalid-name,missing-docstring
 
 """
 @author:       AAron Walters and Nick Petroni
@@ -43,14 +45,14 @@ builtin_types = {
 
 def obj_size(types, objname):
     if objname not in types:
-        raise Exception('Invalid type %s not in types' % objname)
+        raise Exception('Invalid type %s not in types' % (objname))
 
     return types[objname][0]
 
 
 def builtin_size(builtin):
     if builtin not in builtin_types:
-        raise Exception('Invalid built-in type %s' % builtin)
+        raise Exception('Invalid built-in type %s' % (builtin))
 
     return builtin_types[builtin][0]
 
@@ -61,7 +63,7 @@ def read_value(addr_space, value_type, vaddr):
     """
 
     if value_type not in builtin_types:
-        raise Exception('Invalid built-in type %s' % value_type)
+        raise Exception('Invalid built-in type %s' % (value_type))
 
     type_unpack_char = builtin_types[value_type][1]
     type_size = builtin_types[value_type][0]
@@ -69,11 +71,7 @@ def read_value(addr_space, value_type, vaddr):
     buf = addr_space.read(vaddr, type_size)
     if buf is None:
         return None
-
-    try:
-        (val,) = struct.unpack(type_unpack_char, buf)
-    except Exception:
-        return None
+    (val,) = struct.unpack(type_unpack_char, buf)
 
     return val
 
@@ -81,7 +79,7 @@ def read_value(addr_space, value_type, vaddr):
 def read_unicode_string(addr_space, types, member_list, vaddr):
     offset = 0
     if len(member_list) > 1:
-        (offset, current_type) = get_obj_offset(types, member_list)
+        (offset, __) = get_obj_offset(types, member_list)
 
     buf = read_obj(addr_space, types, ['_UNICODE_STRING', 'Buffer'], vaddr + offset)
     length = read_obj(addr_space, types, ['_UNICODE_STRING', 'Length'], vaddr + offset)
@@ -99,7 +97,7 @@ def read_unicode_string(addr_space, types, member_list, vaddr):
 
     try:
         readBuf = readBuf.decode('UTF-16').encode('ascii')
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         return None
 
     return readBuf
@@ -108,7 +106,7 @@ def read_unicode_string(addr_space, types, member_list, vaddr):
 def read_string(addr_space, types, member_list, vaddr, max_length=256):
     offset = 0
     if len(member_list) > 1:
-        (offset, current_type) = get_obj_offset(types, member_list)
+        (offset, __) = get_obj_offset(types, member_list)
 
     val = addr_space.read(vaddr + offset, max_length)
 
@@ -121,10 +119,7 @@ def read_null_string(addr_space, types, member_list, vaddr, max_length=256):
     if string is None:
         return None
 
-    if string.find('\0') == -1:
-        return string
-    (string, none) = string.split('\0', 1)
-    return string
+    return string.split('\0', 1)[0]
 
 
 def get_obj_offset(types, member_list):
@@ -136,13 +131,10 @@ def get_obj_offset(types, member_list):
     current_type = member_list.pop()
 
     offset = 0
-    current_member = 0
-    member_dict = None
 
-    while len(member_list) > 0:
+    while member_list:
         if current_type == 'array':
-            if member_dict:
-                current_type = member_dict[current_member][1][2][0]
+            current_type = member_dict[current_member][1][2][0]
             if current_type in builtin_types:
                 current_type_size = builtin_size(current_type)
             else:
@@ -164,7 +156,7 @@ def get_obj_offset(types, member_list):
 
         current_type = member_dict[current_member][1][0]
 
-    return offset, current_type
+    return (offset, current_type)
 
 
 def read_obj(addr_space, types, member_list, vaddr):

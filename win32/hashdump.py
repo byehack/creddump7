@@ -13,23 +13,22 @@
 # You should have received a copy of the GNU General Public License
 # along with creddump.  If not, see <http://www.gnu.org/licenses/>.
 
+# pylint: disable=invalid-name,missing-docstring
+
 """
 @author:       Brendan Dolan-Gavitt
 @license:      GNU General Public License 2.0 or later
 @contact:      bdolangavitt@wesleyan.edu
 """
 
-import hashlib
-import codecs
-from struct import pack
+from struct import unpack, pack
+import binascii
 
-from ..addrspace import HiveFileAddressSpace
-from .rawreg import *
-from lazagne.config.crypto.rc4 import RC4
-from lazagne.config.crypto.pyDes import des, ECB
-from lazagne.config.crypto.pyaes.aes import AESModeOfOperationCBC
-from lazagne.config.winstructure import char_to_int, chr_or_byte, int_or_bytes
+from Crypto.Hash import MD5
+from Crypto.Cipher import ARC4, DES, AES
 
+from framework.win32.rawreg import get_root, open_key, values, subkeys
+from framework.addrspace import HiveFileAddressSpace
 
 odd_parity = [
     1, 1, 2, 2, 4, 4, 7, 7, 8, 8, 11, 11, 13, 13, 14, 14,
@@ -60,41 +59,40 @@ anum = b"0123456789012345678901234567890123456789\0"
 antpassword = b"NTPASSWORD\0"
 almpassword = b"LMPASSWORD\0"
 
-empty_lm = codecs.decode('aad3b435b51404eeaad3b435b51404ee', 'hex')
-empty_nt = codecs.decode('31d6cfe0d16ae931b73c59d7e0c089c0', 'hex')
-
-AES_BLOCK_SIZE = 16
+empty_lm = binascii.unhexlify("aad3b435b51404eeaad3b435b51404ee")
+empty_nt = binascii.unhexlify("31d6cfe0d16ae931b73c59d7e0c089c0")
 
 
 def str_to_key(s):
-    key = []
-    key.append(char_to_int(s[0]) >> 1)
-    key.append(((char_to_int(s[0]) & 0x01) << 6) | (char_to_int(s[1]) >> 2))
-    key.append(((char_to_int(s[1]) & 0x03) << 5) | (char_to_int(s[2]) >> 3))
-    key.append(((char_to_int(s[2]) & 0x07) << 4) | (char_to_int(s[3]) >> 4))
-    key.append(((char_to_int(s[3]) & 0x0F) << 3) | (char_to_int(s[4]) >> 5))
-    key.append(((char_to_int(s[4]) & 0x1F) << 2) | (char_to_int(s[5]) >> 6))
-    key.append(((char_to_int(s[5]) & 0x3F) << 1) | (char_to_int(s[6]) >> 7))
-    key.append(char_to_int(s[6]) & 0x7F)
-
+    key = bytearray()
+    key.append(s[0] >> 1)
+    key.append(((s[0] & 0x01) << 6) | ((s[1]) >> 2))
+    key.append(((s[1] & 0x03) << 5) | ((s[2]) >> 3))
+    key.append(((s[2] & 0x07) << 4) | ((s[3]) >> 4))
+    key.append(((s[3] & 0x0F) << 3) | ((s[4]) >> 5))
+    key.append(((s[4] & 0x1F) << 2) | ((s[5]) >> 6))
+    key.append(((s[5] & 0x3F) << 1) | ((s[6]) >> 7))
+    key.append(s[6] & 0x7F)
     for i in range(8):
         key[i] = (key[i] << 1)
         key[i] = odd_parity[key[i]]
-
-    return b"".join(chr_or_byte(k) for k in key)
+    return key
 
 
 def sid_to_key(sid):
-    s1 = b""
-    s1 += chr_or_byte(sid & 0xFF)
-    s1 += chr_or_byte((sid >> 8) & 0xFF)
-    s1 += chr_or_byte((sid >> 16) & 0xFF)
-    s1 += chr_or_byte((sid >> 24) & 0xFF)
-    s1 += int_or_bytes(s1[0])
-    s1 += int_or_bytes(s1[1])
-    s1 += int_or_bytes(s1[2])
-    s2 = int_or_bytes(s1[3]) + int_or_bytes(s1[0]) + int_or_bytes(s1[1]) + int_or_bytes(s1[2])
-    s2 += int_or_bytes(s2[0]) + int_or_bytes(s2[1]) + int_or_bytes(s2[2])
+    s1 = bytearray()
+    s1.append(sid & 0xFF)
+    s1.append((sid >> 8) & 0xFF)
+    s1.append((sid >> 16) & 0xFF)
+    s1.append((sid >> 24) & 0xFF)
+    s1.append(s1[0])
+    s1.append(s1[1])
+    s1.append(s1[2])
+    s2 = bytearray([s1[3], s1[0], s1[1], s1[2]])
+    s2.append(s2[0])
+    s2.append(s2[1])
+    s2.append(s2[2])
+
     return str_to_key(s1), str_to_key(s2)
 
 
@@ -103,7 +101,7 @@ def find_control_set(sysaddr):
     if not root:
         return 1
 
-    csselect = open_key(root, [b"Select"])
+    csselect = open_key(root, ["Select"])
     if not csselect:
         return 1
 
@@ -111,11 +109,13 @@ def find_control_set(sysaddr):
         if v.Name == b"Current":
             return v.Data.value
 
+    return 1
+
 
 def get_bootkey(sysaddr):
     cs = find_control_set(sysaddr)
-    lsa_base = [b"ControlSet%03d" % cs, b"Control", b"Lsa"]
-    lsa_keys = [b"JD", b"Skew1", b"GBG", b"Data"]
+    lsa_base = ["ControlSet%03d" % cs, "Control", "Lsa"]
+    lsa_keys = ["JD", "Skew1", "GBG", "Data"]
 
     root = get_root(sysaddr)
     if not root:
@@ -125,24 +125,25 @@ def get_bootkey(sysaddr):
     if not lsa:
         return None
 
-    bootkey = b""
+    bootkey = []
 
     for lk in lsa_keys:
         key = open_key(lsa, [lk])
         class_data = sysaddr.read(key.Class.value, key.ClassLength.value)
-        bootkey += codecs.decode(class_data.decode('utf-16-le'), 'hex')
+        hex_string = class_data.decode('utf-16-le')
+        hex_data = binascii.unhexlify(hex_string)
+        for h in hex_data:
+            bootkey.append(h)
 
-    bootkey_scrambled = b""
+    bootkey_scrambled = []
     for i in range(len(bootkey)):
-        try:
-            bootkey_scrambled += bootkey[p[i]]
-        except TypeError:
-            bootkey_scrambled += bytes([bootkey[p[i]]])
-    return bootkey_scrambled
+        bootkey_scrambled.append(bootkey[p[i]])
+
+    return bytes(bootkey_scrambled)
 
 
 def get_hbootkey(samaddr, bootkey):
-    sam_account_path = [b"SAM", b"Domains", b"Account"]
+    sam_account_path = ["SAM", "Domains", "Account"]
 
     root = get_root(samaddr)
     if not root:
@@ -159,26 +160,31 @@ def get_hbootkey(samaddr, bootkey):
     if not F:
         return None
 
-    revision = ord(F[0x00])
+    revision = F[0x00]
     if revision == 2:
-        md5 = hashlib.md5(F[0x70:0x80] + aqwerty + bootkey + anum)
+        md5 = MD5.new()
+        md5.update(F[0x70:0x80] + aqwerty + bootkey + anum)
         rc4_key = md5.digest()
-        rc4 = RC4(rc4_key)
+
+        rc4 = ARC4.new(rc4_key)
         hbootkey = rc4.encrypt(F[0x80:0xA0])
 
         return hbootkey
 
-    elif revision == 3:
+    if revision == 3:
         iv = F[0x78:0x88]
         encryptedHBootKey = F[0x88:0xA8]
-        cipher = AESModeOfOperationCBC(bootkey, iv=iv)
-        hbootkey = b"".join([cipher.decrypt(encryptedHBootKey[i:i + AES_BLOCK_SIZE]) for i in range(0, len(encryptedHBootKey), AES_BLOCK_SIZE)])
+        cipher = AES.new(bootkey, AES.MODE_CBC, iv)
+        hbootkey = cipher.decrypt(encryptedHBootKey)
 
         return hbootkey[:16]
 
+    print("Unknown revision: %d" % revision)
+    return None
 
 def get_user_keys(samaddr):
-    user_key_path = [b"SAM", b"Domains", b"Account", b"Users"]
+    user_key_path = ["SAM", "Domains", "Account", "Users"]
+
     root = get_root(samaddr)
     if not root:
         return []
@@ -194,68 +200,74 @@ def decrypt_single_hash(rid, hbootkey, enc_hash, lmntstr):
     if enc_hash == "":
         return ""
     (des_k1, des_k2) = sid_to_key(rid)
-    d1 = des(des_k1, ECB)
-    d2 = des(des_k2, ECB)
-    md5 = hashlib.md5()
+    d1 = DES.new(des_k1, DES.MODE_ECB)
+    d2 = DES.new(des_k2, DES.MODE_ECB)
+    md5 = MD5.new()
     md5.update(hbootkey[:0x10] + pack("<L", rid) + lmntstr)
     rc4_key = md5.digest()
-    rc4 = RC4(rc4_key)
+    rc4 = ARC4.new(rc4_key)
     obfkey = rc4.encrypt(enc_hash)
-    hash_ = d1.decrypt(obfkey[:8]) + d2.decrypt(obfkey[8:])
-    return hash_
+    return d1.decrypt(obfkey[:8]) + d2.decrypt(obfkey[8:])
 
 
-def decrypt_single_salted_hash(rid, hbootkey, enc_hash, lmntstr, salt):
+def decrypt_single_salted_hash(rid, hbootkey, enc_hash, salt):
     if enc_hash == "":
         return ""
     (des_k1, des_k2) = sid_to_key(rid)
-    d1 = des(des_k1, ECB)
-    d2 = des(des_k2, ECB)
-    cipher = AESModeOfOperationCBC(hbootkey, salt)
-    obfkey = b"".join([cipher.decrypt(enc_hash[i:i + AES_BLOCK_SIZE]) for i in range(0, len(enc_hash), AES_BLOCK_SIZE)])
-
-    hash_ = d1.decrypt(obfkey[:8]) + d2.decrypt(obfkey[8:16])
-    return hash_
+    d1 = DES.new(des_k1, DES.MODE_ECB)
+    d2 = DES.new(des_k2, DES.MODE_ECB)
+    cipher = AES.new(hbootkey[:16], AES.MODE_CBC, salt)
+    obfkey = cipher.decrypt(enc_hash)
+    return d1.decrypt(obfkey[:8]) + d2.decrypt(obfkey[8:16])
 
 
 def get_user_hashes(user_key, hbootkey):
+    # pylint: disable=too-many-locals
     samaddr = user_key.space
-    rid = int(user_key.Name, 16)
+    try:
+        rid = int(user_key.Name.decode(), 16)
+    except ValueError:
+        print("Could not decode rid from key name %s" % (user_key.Name.decode()))
+        return None, None
     V = None
     for v in values(user_key):
-        if v.Name == 'V':
+        if v.Name == b'V':
             V = samaddr.read(v.Data.value, v.DataLength.value)
-    if not V: return None
-    hash_offset = unpack("<L", V[0xa8:0xa8+4])[0] + 0xCC
+    if not V:
+        return None, None
+    hash_offset = unpack("<L", V[0xa8:0xa8 + 4])[0] + 0xCC
 
-    lm_offset_bytes = V[0x9c:0x9c+4]
-    nt_offset_bytes = V[0x9c+12:0x9c+16]
+    lm_offset_bytes = V[0x9c:0x9c + 4]
+    nt_offset_bytes = V[0x9c + 12:0x9c + 16]
     lm_offset = unpack("<L", lm_offset_bytes)[0] + 204
     nt_offset = unpack("<L", nt_offset_bytes)[0] + 204
 
-    lm_revision = int(codecs.encode(V[lm_offset+2:lm_offset+3], 'hex').decode(), 16)
-    if lm_revision == 1:
-        lm_exists = True if unpack("<L", V[0x9c+4:0x9c+8])[0] == 20 else False
-        enc_lm_hash = V[hash_offset+4:hash_offset+20] if lm_exists else ""
-        lmhash = decrypt_single_hash(rid, hbootkey, enc_lm_hash, almpassword)
-    
-    elif lm_revision == 2:
-        lm_exists = True if unpack("<L", V[0x9c+4:0x9c+8])[0] == 56 else False
-        lm_salt = V[hash_offset+4:hash_offset+20] if lm_exists else ""
-        enc_lm_hash = V[hash_offset+20:hash_offset+52] if lm_exists else ""
-        lmhash = decrypt_single_salted_hash(rid, hbootkey, enc_lm_hash, almpassword, lm_salt)
+    lmhash = None
+    nthash = None
 
-    nt_revision = int(codecs.encode(V[nt_offset+2:nt_offset+3], 'hex').decode(), 16)
+    lm_revision_bytes = V[lm_offset + 2:lm_offset + 3]
+    lm_revision = unpack('<B', lm_revision_bytes)[0]
+    if lm_revision == 1:
+        lm_exists = unpack("<L", V[0x9c + 4:0x9c + 8])[0] == 20
+        enc_lm_hash = V[hash_offset + 4:hash_offset + 20] if lm_exists else ""
+        lmhash = decrypt_single_hash(rid, hbootkey, enc_lm_hash, almpassword)
+    elif lm_revision == 2:
+        lm_exists = unpack("<L", V[0x9c + 4:0x9c + 8])[0] == 56
+        lm_salt = V[hash_offset + 4:hash_offset + 20] if lm_exists else ""
+        enc_lm_hash = V[hash_offset + 20:hash_offset + 52] if lm_exists else ""
+        lmhash = decrypt_single_salted_hash(rid, hbootkey, enc_lm_hash, lm_salt)
+
+    nt_revision_bytes = V[nt_offset + 2:nt_offset + 3]
+    nt_revision = unpack('<B', nt_revision_bytes)[0]
     if nt_revision == 1:
-        nt_exists = True if unpack("<L", V[0x9c+16:0x9c+20])[0] == 20 else False
-        enc_nt_hash = V[nt_offset+4:nt_offset+20] if nt_exists else ""
+        nt_exists = unpack("<L", V[0x9c + 16:0x9c + 20])[0] == 20
+        enc_nt_hash = V[nt_offset + 4:nt_offset + 20] if nt_exists else ""
         nthash = decrypt_single_hash(rid, hbootkey, enc_nt_hash, antpassword)
-    
     elif nt_revision == 2:
-        nt_exists = True if unpack("<L", V[0x9c+16:0x9c+20])[0] == 56 else False
-        nt_salt = V[nt_offset+8:nt_offset+24] if nt_exists else ""
-        enc_nt_hash = V[nt_offset+24:nt_offset+56] if nt_exists else ""
-        nthash = decrypt_single_salted_hash(rid, hbootkey, enc_nt_hash, antpassword, nt_salt)
+        nt_exists = unpack("<L", V[0x9c + 16:0x9c + 20])[0] == 56
+        nt_salt = V[nt_offset + 8:nt_offset + 24] if nt_exists else ""
+        enc_nt_hash = V[nt_offset + 24:nt_offset + 56] if nt_exists else ""
+        nthash = decrypt_single_salted_hash(rid, hbootkey, enc_nt_hash, nt_salt)
 
     return lmhash, nthash
 
@@ -279,20 +291,21 @@ def get_user_name(user_key):
 def dump_hashes(sysaddr, samaddr):
     bootkey = get_bootkey(sysaddr)
     hbootkey = get_hbootkey(samaddr, bootkey)
-    results = []
+
     for user in get_user_keys(samaddr):
         lmhash, nthash = get_user_hashes(user, hbootkey)
         if not lmhash:
             lmhash = empty_lm
         if not nthash:
             nthash = empty_nt
-        results.append(
-            "%s:%d:%s:%s:::" % (get_user_name(user), int(user.Name, 16), codecs.encode(lmhash, 'hex').decode(),
-                                codecs.encode(nthash, 'hex').decode()))
-    return results
+        try:
+            print("%s:%d:%s:%s:::" % (get_user_name(user), int(user.Name, 16),
+                                      lmhash.hex(), nthash.hex()))
+        except ValueError:
+            pass  # skip if user.Name cannot be converted to an int, since its a "false" rid like the "Names" key
 
 
 def dump_file_hashes(syshive_fname, samhive_fname):
     sysaddr = HiveFileAddressSpace(syshive_fname)
     samaddr = HiveFileAddressSpace(samhive_fname)
-    return dump_hashes(sysaddr, samaddr)
+    dump_hashes(sysaddr, samaddr)
